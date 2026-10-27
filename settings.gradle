@@ -1,0 +1,8 @@
+rootProject.name = "Whitegram"
+
+include ':TMessagesProj'
+include ':TMessagesProj_App'
+include ':TMessagesProj_AppHuawei'
+include ':TMessagesProj_AppHockeyApp'
+include ':TMessagesProj_AppStandalone'
+include ':TMessagesProj_AppTests'
