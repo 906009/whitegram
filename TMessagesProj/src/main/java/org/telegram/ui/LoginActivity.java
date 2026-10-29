@@ -515,11 +515,13 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             }
         }
         getNotificationCenter().removeObserver(this, NotificationCenter.didUpdateConnectionState);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.proxySettingsChanged);
     }
 
     @Override
     public boolean onFragmentCreate() {
         getNotificationCenter().addObserver(this, NotificationCenter.didUpdateConnectionState);
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.proxySettingsChanged);
         return super.onFragmentCreate();
     }
 
@@ -748,8 +750,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         proxyButtonView = new ImageView(context);
         proxyButtonView.setImageDrawable(proxyDrawable = new ProxyDrawable(context));
         proxyButtonView.setOnClickListener(v -> presentFragment(new ProxyListActivity()));
-        proxyButtonView.setAlpha(0f);
-        proxyButtonView.setVisibility(View.GONE);
+        proxyButtonView.setAlpha(1f);
+        proxyButtonView.setVisibility(View.VISIBLE);
         sizeNotifierFrameLayout.addView(proxyButtonView, LayoutHelper.createFrame(32, 32, Gravity.RIGHT | Gravity.TOP, 16, 16, 16, 16));
         updateProxyButton(false, true);
 
@@ -8803,15 +8805,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         final boolean proxyEnabled = preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress);
         final boolean connected = currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
         final boolean connecting = currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateWaitingForNetwork || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy;
-        if (proxyEnabled) {
-            proxyDrawable.setConnected(true, connected, animated);
-            showProxyButton(true, animated);
-        } else if (getMessagesController().blockedCountry && !SharedConfig.proxyList.isEmpty() || connecting) {
-            proxyDrawable.setConnected(true, connected, animated);
-            showProxyButtonDelayed();
-        } else {
-            showProxyButton(false, animated);
-        }
+        proxyDrawable.setConnected(proxyEnabled, connected, animated);
+        showProxyButton(true, animated);
     }
     
     private boolean proxyButtonVisible;
@@ -8855,8 +8850,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     @Override
     public void didReceivedNotification(int id, int account, Object... args) {
-        if (id == NotificationCenter.didUpdateConnectionState) {
-            updateProxyButton(true, false);
+        if (id == NotificationCenter.didUpdateConnectionState || id == NotificationCenter.proxySettingsChanged) {
+            updateProxyButton(true, true);
         }
     }
 

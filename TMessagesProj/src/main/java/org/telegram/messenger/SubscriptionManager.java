@@ -131,7 +131,9 @@ public class SubscriptionManager {
             SharedConfig.ProxyInfo info = SharedConfig.proxyList.get(i);
             if (info != null && (info.isXray() || info.isQwdtt())) {
                 boolean match = false;
-                if (!TextUtils.isEmpty(sub.id) && info.extra != null && info.extra.contains(sub.id)) {
+                if (!TextUtils.isEmpty(sub.id) && sub.id.equals(info.secret)) {
+                    match = true;
+                } else if (!TextUtils.isEmpty(sub.id) && info.extra != null && info.extra.contains(sub.id)) {
                     match = true;
                 } else if (!TextUtils.isEmpty(sub.title) && info.username != null && (info.username.startsWith(sub.title) || info.username.contains(sub.title))) {
                     match = true;
@@ -340,19 +342,53 @@ public class SubscriptionManager {
         if (sub.type == Subscription.TYPE_XRAY) {
             newProxies.addAll(parseXrayContent(rawContent, sub.title, sub.id));
         } else {
-            newProxies.addAll(parseQwdttContent(rawContent, sub.title));
+            newProxies.addAll(parseQwdttContent(rawContent, sub.title, sub.id));
         }
 
         if (newProxies.isEmpty()) {
             throw new Exception("No valid servers found in subscription response");
         }
 
-        // Add parsed proxies to SharedConfig
+        // Replace previous proxies for this subscription to prevent stale duplicates
         SharedConfig.loadProxyList();
+        boolean currentProxyReplaced = false;
+        SharedConfig.ProxyInfo matchingNewProxy = null;
+
+        for (int i = SharedConfig.proxyList.size() - 1; i >= 0; i--) {
+            SharedConfig.ProxyInfo oldInfo = SharedConfig.proxyList.get(i);
+            if (oldInfo != null && (oldInfo.isXray() || oldInfo.isQwdtt())) {
+                boolean match = false;
+                if (!TextUtils.isEmpty(sub.id) && sub.id.equals(oldInfo.secret)) {
+                    match = true;
+                } else if (!TextUtils.isEmpty(sub.id) && oldInfo.extra != null && oldInfo.extra.contains(sub.id)) {
+                    match = true;
+                } else if (!TextUtils.isEmpty(sub.title) && oldInfo.username != null && (oldInfo.username.startsWith(sub.title) || oldInfo.username.contains(sub.title))) {
+                    match = true;
+                }
+                if (match) {
+                    if (SharedConfig.currentProxy == oldInfo) {
+                        currentProxyReplaced = true;
+                        for (SharedConfig.ProxyInfo newCandidate : newProxies) {
+                            if (newCandidate.username.equals(oldInfo.username) || (newCandidate.extra != null && newCandidate.extra.equals(oldInfo.extra))) {
+                                matchingNewProxy = newCandidate;
+                                break;
+                            }
+                        }
+                    }
+                    SharedConfig.proxyList.remove(i);
+                }
+            }
+        }
+
         int added = 0;
         for (SharedConfig.ProxyInfo info : newProxies) {
-            SharedConfig.addProxy(info, false);
+            SharedConfig.proxyList.add(info);
             added++;
+        }
+
+        if (currentProxyReplaced) {
+            SharedConfig.currentProxy = matchingNewProxy != null ? matchingNewProxy : (newProxies.isEmpty() ? null : newProxies.get(0));
+            SharedConfig.applyCurrentProxy(SharedConfig.currentProxy != null);
         }
         SharedConfig.saveProxyList();
 
@@ -411,7 +447,7 @@ public class SubscriptionManager {
                         );
                         list.add(info);
                     } else if (item instanceof String) {
-                        parseXrayLine((String) item, subTitle, list);
+                        parseXrayLine((String) item, subTitle, subId, list);
                     }
                 }
             } catch (Throwable e) {
@@ -439,13 +475,13 @@ public class SubscriptionManager {
                                     XrayController.DEFAULT_SOCKS_PORT,
                                     remark,
                                     "",
-                                    "",
+                                    subId != null ? subId : "",
                                     SharedConfig.ProxyInfo.PROXY_TYPE_XRAY,
                                     subObj.toString()
                             );
                             list.add(info);
                         } else if (item instanceof String) {
-                            parseXrayLine((String) item, subTitle, list);
+                            parseXrayLine((String) item, subTitle, subId, list);
                         }
                     }
                 } else if (obj.has("outbounds") || obj.has("inbounds")) {
@@ -458,7 +494,7 @@ public class SubscriptionManager {
                             XrayController.DEFAULT_SOCKS_PORT,
                             remark,
                             "",
-                            "",
+                            subId != null ? subId : "",
                             SharedConfig.ProxyInfo.PROXY_TYPE_XRAY,
                             obj.toString()
                     );
@@ -473,14 +509,14 @@ public class SubscriptionManager {
         if (list.isEmpty()) {
             String[] lines = decodedText.split("[\r\n]+");
             for (String line : lines) {
-                parseXrayLine(line, subTitle, list);
+                parseXrayLine(line, subTitle, subId, list);
             }
         }
 
         return list;
     }
 
-    private void parseXrayLine(String line, String subTitle, List<SharedConfig.ProxyInfo> list) {
+    private void parseXrayLine(String line, String subTitle, String subId, List<SharedConfig.ProxyInfo> list) {
         line = line != null ? line.trim() : "";
         if (TextUtils.isEmpty(line)) return;
 
@@ -508,7 +544,7 @@ public class SubscriptionManager {
                     XrayController.DEFAULT_SOCKS_PORT,
                     remark,
                     "",
-                    "",
+                    subId != null ? subId : "",
                     SharedConfig.ProxyInfo.PROXY_TYPE_XRAY,
                     line
             );
@@ -516,7 +552,7 @@ public class SubscriptionManager {
         }
     }
 
-    private List<SharedConfig.ProxyInfo> parseQwdttContent(String content, String subTitle) {
+    private List<SharedConfig.ProxyInfo> parseQwdttContent(String content, String subTitle, String subId) {
         List<SharedConfig.ProxyInfo> list = new ArrayList<>();
         String decodedText = content;
 
@@ -534,7 +570,7 @@ public class SubscriptionManager {
                 if (decodedText.startsWith("[")) {
                     JSONArray arr = new JSONArray(decodedText);
                     for (int i = 0; i < arr.length(); i++) {
-                        SharedConfig.ProxyInfo info = parseQwdttJsonObject(arr.getJSONObject(i), subTitle, list.size() + 1);
+                        SharedConfig.ProxyInfo info = parseQwdttJsonObject(arr.getJSONObject(i), subTitle, subId, list.size() + 1);
                         if (info != null) list.add(info);
                     }
                 } else {
@@ -542,11 +578,11 @@ public class SubscriptionManager {
                     if (obj.has("profiles")) {
                         JSONArray arr = obj.getJSONArray("profiles");
                         for (int i = 0; i < arr.length(); i++) {
-                            SharedConfig.ProxyInfo info = parseQwdttJsonObject(arr.getJSONObject(i), subTitle, list.size() + 1);
+                            SharedConfig.ProxyInfo info = parseQwdttJsonObject(arr.getJSONObject(i), subTitle, subId, list.size() + 1);
                             if (info != null) list.add(info);
                         }
                     } else {
-                        SharedConfig.ProxyInfo info = parseQwdttJsonObject(obj, subTitle, 1);
+                        SharedConfig.ProxyInfo info = parseQwdttJsonObject(obj, subTitle, subId, 1);
                         if (info != null) list.add(info);
                     }
                 }
@@ -558,7 +594,7 @@ public class SubscriptionManager {
         for (String line : lines) {
             line = line.trim();
             if (line.startsWith("qwdtt://")) {
-                SharedConfig.ProxyInfo info = parseQwdttLink(line, subTitle, list.size() + 1);
+                SharedConfig.ProxyInfo info = parseQwdttLink(line, subTitle, subId, list.size() + 1);
                 if (info != null) {
                     list.add(info);
                 }
@@ -568,7 +604,7 @@ public class SubscriptionManager {
         return list;
     }
 
-    private SharedConfig.ProxyInfo parseQwdttJsonObject(JSONObject obj, String subTitle, int index) {
+    private SharedConfig.ProxyInfo parseQwdttJsonObject(JSONObject obj, String subTitle, String subId, int index) {
         try {
             String name = obj.optString("name", "");
             if (TextUtils.isEmpty(name)) {
@@ -590,7 +626,7 @@ public class SubscriptionManager {
                     cfg.socksPort > 0 ? cfg.socksPort : QwdttController.DEFAULT_SOCKS_PORT,
                     name,
                     "",
-                    "",
+                    subId != null ? subId : "",
                     SharedConfig.ProxyInfo.PROXY_TYPE_QWDTT,
                     cfg.toJson()
             );
@@ -600,6 +636,10 @@ public class SubscriptionManager {
     }
 
     public static SharedConfig.ProxyInfo parseQwdttLink(String link, String subTitle, int index) {
+        return parseQwdttLink(link, subTitle, "", index);
+    }
+
+    public static SharedConfig.ProxyInfo parseQwdttLink(String link, String subTitle, String subId, int index) {
         try {
             // format: qwdtt://config?name=...&peer=...&hashes=...&pass=...&port=...
             int queryIdx = link.indexOf('?');
@@ -663,7 +703,7 @@ public class SubscriptionManager {
                     port,
                     name,
                     "",
-                    "",
+                    subId != null ? subId : "",
                     SharedConfig.ProxyInfo.PROXY_TYPE_QWDTT,
                     cfg.toJson()
             );

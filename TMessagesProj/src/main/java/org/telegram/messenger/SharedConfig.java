@@ -479,6 +479,19 @@ public class SharedConfig {
             return proxyType == PROXY_TYPE_QWDTT;
         }
 
+        public String getSubId() {
+            if (isXray() || isQwdtt()) {
+                return secret != null ? secret : "";
+            }
+            return "";
+        }
+
+        public void setSubId(String subId) {
+            if (isXray() || isQwdtt()) {
+                this.secret = subId != null ? subId : "";
+            }
+        }
+
         public boolean isMtproto() {
             return proxyType == PROXY_TYPE_MTPROTO || (!isXray() && !isQwdtt() && !TextUtils.isEmpty(secret));
         }

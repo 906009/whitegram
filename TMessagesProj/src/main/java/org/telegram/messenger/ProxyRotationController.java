@@ -19,28 +19,59 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
     );
 
     private boolean isCurrentlyChecking;
-    private Runnable checkProxyAndSwitchRunnable = () -> {
+    private final java.util.concurrent.atomic.AtomicInteger pendingChecksCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+    private final Runnable checkProxyAndSwitchRunnable = this::performCheckAndSwitch;
+
+    private void performCheckAndSwitch() {
+        int currentAccount = UserConfig.selectedAccount;
+        int connState = ConnectionsManager.getInstance(currentAccount).getConnectionState();
+
+        // Never disconnect or switch if already happily connected!
+        if (connState == ConnectionsManager.ConnectionStateConnected && SharedConfig.currentProxy != null && SharedConfig.currentProxy.available) {
+            isCurrentlyChecking = false;
+            return;
+        }
+
+        // If qWDTT is currently initializing its TURN allocation, allow it more time
+        if (QwdttController.getInstance().isStarting()) {
+            AndroidUtilities.runOnUIThread(checkProxyAndSwitchRunnable, 10000L);
+            return;
+        }
+
         isCurrentlyChecking = true;
 
-        int currentAccount = UserConfig.selectedAccount;
         if (SharedConfig.currentProxy != null) {
-            int connState = ConnectionsManager.getInstance(currentAccount).getConnectionState();
             if (connState == ConnectionsManager.ConnectionStateConnectingToProxy) {
                 SharedConfig.currentProxy.available = false;
                 SharedConfig.currentProxy.availableCheckTime = SystemClock.elapsedRealtime();
                 SharedConfig.currentProxy.ping = 0;
             }
         }
-        boolean startedCheck = false;
+
+        pendingChecksCount.set(0);
+        java.util.List<SharedConfig.ProxyInfo> toCheck = new java.util.ArrayList<>();
         for (int i = 0; i < SharedConfig.proxyList.size(); i++) {
             SharedConfig.ProxyInfo proxyInfo = SharedConfig.proxyList.get(i);
             if (proxyInfo.checking || SystemClock.elapsedRealtime() - proxyInfo.availableCheckTime < 2 * 60 * 1000) {
                 continue;
             }
+            toCheck.add(proxyInfo);
+        }
+
+        if (toCheck.isEmpty()) {
+            isCurrentlyChecking = false;
+            switchToAvailable();
+            return;
+        }
+
+        pendingChecksCount.set(toCheck.size());
+
+        for (SharedConfig.ProxyInfo proxyInfo : toCheck) {
+            proxyInfo.checking = true;
+
             if (proxyInfo.isXray() || proxyInfo.isQwdtt()) {
-                if (proxyInfo == SharedConfig.currentProxy) {
-                    startedCheck = true;
-                    proxyInfo.checking = true;
+                if (proxyInfo == SharedConfig.currentProxy && (XrayController.getInstance().isRunning() || QwdttController.getInstance().isRunning())) {
                     String authUser = proxyInfo.isXray() ? XrayController.getInstance().getCurrentAuthUser() : "";
                     String authPass = proxyInfo.isXray() ? XrayController.getInstance().getCurrentAuthPass() : "";
                     int checkPort = proxyInfo.isXray() ? XrayController.getInstance().getCurrentPort() : QwdttController.getInstance().getCurrentPort();
@@ -56,10 +87,12 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
                             proxyInfo.available = true;
                         }
                         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyCheckDone, proxyInfo);
+                        checkCompletion();
                     }));
+                } else if (proxyInfo == SharedConfig.currentProxy && QwdttController.getInstance().isStarting()) {
+                    proxyInfo.checking = false;
+                    checkCompletion();
                 } else {
-                    startedCheck = true;
-                    proxyInfo.checking = true;
                     XrayController.checkServerPing(proxyInfo, time -> {
                         proxyInfo.availableCheckTime = SystemClock.elapsedRealtime();
                         proxyInfo.checking = false;
@@ -71,12 +104,12 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
                             proxyInfo.available = true;
                         }
                         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyCheckDone, proxyInfo);
+                        checkCompletion();
                     });
                 }
                 continue;
             }
-            startedCheck = true;
-            proxyInfo.checking = true;
+
             proxyInfo.proxyCheckPingId = ConnectionsManager.getInstance(currentAccount).checkProxy(proxyInfo.address, proxyInfo.port, proxyInfo.username, proxyInfo.password, proxyInfo.secret, time -> AndroidUtilities.runOnUIThread(() -> {
                 proxyInfo.availableCheckTime = SystemClock.elapsedRealtime();
                 proxyInfo.checking = false;
@@ -88,14 +121,23 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
                     proxyInfo.available = true;
                 }
                 NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyCheckDone, proxyInfo);
+                checkCompletion();
             }));
         }
+    }
 
-        if (!startedCheck) {
-            isCurrentlyChecking = false;
-            switchToAvailable();
+    private void checkCompletion() {
+        if (pendingChecksCount.decrementAndGet() <= 0) {
+            AndroidUtilities.runOnUIThread(() -> {
+                int state = ConnectionsManager.getInstance(UserConfig.selectedAccount).getConnectionState();
+                if (state != ConnectionsManager.ConnectionStateConnected) {
+                    switchToAvailable();
+                } else {
+                    isCurrentlyChecking = false;
+                }
+            });
         }
-    };
+    }
 
     public static ProxyRotationController getInstance() {
         return INSTANCE;
@@ -146,6 +188,12 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
         isCurrentlyChecking = false;
 
         if (!SharedConfig.proxyRotationEnabled) {
+            return;
+        }
+
+        // Never switch if currently connected!
+        int connState = ConnectionsManager.getInstance(UserConfig.selectedAccount).getConnectionState();
+        if (connState == ConnectionsManager.ConnectionStateConnected && SharedConfig.currentProxy != null && SharedConfig.currentProxy.available) {
             return;
         }
 
@@ -217,15 +265,12 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
     @Override
     public void didReceivedNotification(int id, int account, Object... args) {
         if (id == NotificationCenter.proxyCheckDone) {
-            if (!SharedConfig.isProxyEnabled() || !SharedConfig.proxyRotationEnabled || SharedConfig.proxyList.size() <= 1 || !isCurrentlyChecking) {
-                return;
-            }
-
-            switchToAvailable();
+            // Do not switch immediately on individual ping results to prevent thrashing
+            return;
         } else if (id == NotificationCenter.proxySettingsChanged) {
             AndroidUtilities.cancelRunOnUIThread(checkProxyAndSwitchRunnable);
         } else if (id == NotificationCenter.didUpdateConnectionState && account == UserConfig.selectedAccount) {
-            if (!SharedConfig.isProxyEnabled() && !SharedConfig.proxyRotationEnabled || SharedConfig.proxyList.size() <= 1) {
+            if (!SharedConfig.isProxyEnabled() || !SharedConfig.proxyRotationEnabled || SharedConfig.proxyList.size() <= 1) {
                 return;
             }
 
@@ -233,7 +278,15 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
 
             if (state == ConnectionsManager.ConnectionStateConnectingToProxy) {
                 if (!isCurrentlyChecking) {
-                    AndroidUtilities.runOnUIThread(checkProxyAndSwitchRunnable, ROTATION_TIMEOUTS.get(SharedConfig.proxyRotationTimeout) * 1000L);
+                    long timeoutSec = ROTATION_TIMEOUTS.get(SharedConfig.proxyRotationTimeout);
+                    if (SharedConfig.currentProxy != null && SharedConfig.currentProxy.isQwdtt()) {
+                        // qWDTT takes ~15-25 seconds to authenticate and allocate TURN relay channels
+                        timeoutSec = Math.max(35, timeoutSec);
+                    }
+                    if (QwdttController.getInstance().isStarting()) {
+                        timeoutSec = Math.max(35, timeoutSec);
+                    }
+                    AndroidUtilities.runOnUIThread(checkProxyAndSwitchRunnable, timeoutSec * 1000L);
                 }
             } else {
                 if (state == ConnectionsManager.ConnectionStateConnected && SharedConfig.currentProxy != null) {

@@ -30,6 +30,7 @@ public class QwdttController {
 
     private Process process;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
+    private final AtomicBoolean isStarting = new AtomicBoolean(false);
     private int currentPort = DEFAULT_SOCKS_PORT;
     private String lastLogs = "";
 
@@ -96,6 +97,10 @@ public class QwdttController {
         return isRunning.get();
     }
 
+    public boolean isStarting() {
+        return isStarting.get();
+    }
+
     public int getCurrentPort() {
         return currentPort;
     }
@@ -123,6 +128,9 @@ public class QwdttController {
                 int socksPort = config.socksPort > 0 && config.socksPort != DEFAULT_SOCKS_PORT ? config.socksPort : XrayController.findFreePort();
                 int listenPort = config.listenPort > 0 && config.listenPort != DEFAULT_LISTEN_PORT ? config.listenPort : XrayController.findFreePort();
 
+                isStarting.set(true);
+                ensureVkProfileJson(context);
+
                 List<String> cmd = new ArrayList<>();
                 cmd.add(binaryFile.getAbsolutePath());
                 cmd.add("-peer");
@@ -149,10 +157,23 @@ public class QwdttController {
                     cmd.add(config.password);
                 }
 
+                // Required network and runtime parameters for VK TURN stability
+                cmd.add("-go-dns");
+                cmd.add("yandex");
+                cmd.add("-captcha-mode");
+                cmd.add("auto");
+                cmd.add("-vk-auth");
+                cmd.add("anonymous");
+                cmd.add("-vk-anon-path");
+                cmd.add("vkcalls");
+                cmd.add("-obfs");
+                cmd.add("audio");
+
                 FileLog.d(TAG + " starting qWDTT process with cmd: " + cmd);
 
                 ProcessBuilder pb = new ProcessBuilder(cmd);
                 pb.directory(context.getFilesDir());
+                pb.environment().put("LD_LIBRARY_PATH", context.getApplicationInfo().nativeLibraryDir);
                 pb.redirectErrorStream(true);
 
                 process = pb.start();
@@ -197,8 +218,9 @@ public class QwdttController {
                     } catch (Throwable ignored) {}
                 }).start();
 
-                // Wait for SOCKS port to be ready
-                boolean ready = waitForPort(socksPort, 12000);
+                // Wait for SOCKS port to be ready (up to 30s for VK TURN handshake & relays)
+                boolean ready = waitForPort(socksPort, 30000);
+                isStarting.set(false);
                 if (ready) {
                     isRunning.set(true);
                     currentPort = socksPort;
@@ -217,6 +239,7 @@ public class QwdttController {
 
             } catch (Throwable e) {
                 FileLog.e(TAG + " error starting qWDTT: " + e.getMessage(), e);
+                isStarting.set(false);
                 isRunning.set(false);
                 if (callback != null) {
                     AndroidUtilities.runOnUIThread(() -> callback.onError(e.getMessage()));
@@ -230,6 +253,7 @@ public class QwdttController {
     }
 
     private void stopInternal() {
+        isStarting.set(false);
         isRunning.set(false);
         if (process != null) {
             try {
@@ -242,10 +266,55 @@ public class QwdttController {
 
             try {
                 process.destroy();
+                for (int i = 0; i < 10; i++) {
+                    try {
+                        process.exitValue();
+                        break;
+                    } catch (IllegalThreadStateException e) {
+                        try { Thread.sleep(50); } catch (Throwable ignored) {}
+                    }
+                }
+                process.destroyForcibly();
             } catch (Throwable ignored) {}
 
             process = null;
             FileLog.d(TAG + " qWDTT stopped");
+            try { Thread.sleep(150); } catch (Throwable ignored) {}
+        }
+    }
+
+    private void ensureVkProfileJson(Context context) {
+        try {
+            File profileFile = new File(context.getFilesDir(), "vk_profile.json");
+            if (!profileFile.exists() || profileFile.length() < 10) {
+                JSONObject profile = new JSONObject();
+                profile.put("user_agent", "Mozilla/5.0 (Linux; Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0");
+                JSONObject dev = new JSONObject();
+                dev.put("screenWidth", 1080);
+                dev.put("screenHeight", 2400);
+                dev.put("screenAvailWidth", 1080);
+                dev.put("screenAvailHeight", 2400);
+                dev.put("innerWidth", 1080);
+                dev.put("innerHeight", 2100);
+                dev.put("devicePixelRatio", 2.5);
+                dev.put("language", "ru-RU");
+                org.json.JSONArray langs = new org.json.JSONArray();
+                langs.put("ru-RU");
+                langs.put("ru");
+                langs.put("en-US");
+                dev.put("languages", langs);
+                dev.put("webdriver", false);
+                dev.put("hardwareConcurrency", 8);
+                dev.put("notificationsPermission", "default");
+                profile.put("device_json", dev.toString());
+                profile.put("browser_fp", "WhitegramAndroidClient_" + (System.currentTimeMillis() % 1000000));
+
+                try (FileOutputStream fos = new FileOutputStream(profileFile)) {
+                    fos.write(profile.toString().getBytes("UTF-8"));
+                }
+            }
+        } catch (Throwable e) {
+            FileLog.e(TAG + " failed to create vk_profile.json: " + e.getMessage());
         }
     }
 

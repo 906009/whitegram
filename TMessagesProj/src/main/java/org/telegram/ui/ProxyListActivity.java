@@ -1089,6 +1089,10 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                         }
                         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyCheckDone, proxyInfo);
                     }));
+                } else if (proxyInfo == SharedConfig.currentProxy && QwdttController.getInstance().isStarting()) {
+                    // Still starting up, avoid premature inactive check
+                    proxyInfo.checking = false;
+                    continue;
                 } else {
                     XrayController.checkServerPing(proxyInfo, time -> {
                         proxyInfo.availableCheckTime = SystemClock.elapsedRealtime();

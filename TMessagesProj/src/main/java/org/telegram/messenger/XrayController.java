@@ -355,24 +355,17 @@ public class XrayController {
                         } catch (Throwable ignored) {}
                     }
                 } else if (info.isQwdtt()) {
-                    QwdttController.QwdttConfig cfg = QwdttController.QwdttConfig.fromJson(info.extra);
-                    if (!TextUtils.isEmpty(cfg.peer)) {
-                        String peer = cfg.peer;
-                        int colon = peer.indexOf(':');
-                        if (colon != -1) {
-                            host = peer.substring(0, colon);
-                            port = Integer.parseInt(peer.substring(colon + 1));
-                        } else {
-                            host = peer;
-                            port = 9000;
-                        }
-                    }
+                    // For qWDTT, peer port is UDP tunneled through VK TURN.
+                    // Directly connecting TCP to peer:9000 will fail.
+                    // We measure latency to the VK TURN relay infrastructure.
+                    host = "api.vk.com";
+                    port = 443;
                 }
 
                 if (!TextUtils.isEmpty(host) && port > 0) {
                     long t0 = SystemClock.elapsedRealtime();
                     try (java.net.Socket s = new java.net.Socket()) {
-                        s.connect(new java.net.InetSocketAddress(host, port), 1200);
+                        s.connect(new java.net.InetSocketAddress(host, port), 2500);
                         ping = SystemClock.elapsedRealtime() - t0;
                     }
                 }

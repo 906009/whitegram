@@ -72,6 +72,23 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 }
 
+def getPropOrEnv(String propName, String envName, String defaultValue = "") {
+    def envVal = System.getenv(envName)
+    if (envVal != null && !envVal.trim().isEmpty()) {
+        return envVal.trim()
+    }
+    def propsFile = rootProject.file('local.properties')
+    if (propsFile.exists()) {
+        def props = new Properties()
+        props.load(new FileInputStream(propsFile))
+        def val = props.getProperty(propName)
+        if (val != null && !val.trim().isEmpty()) {
+            return val.trim()
+        }
+    }
+    return defaultValue
+}
+
 def isWindows = String.valueOf(DefaultNativePlatform.currentOperatingSystem.toFamilyName() == OperatingSystemFamily.WINDOWS)
 android {
     compileSdkVersion 35
@@ -107,6 +124,11 @@ android {
         vectorDrawables.generatedDensities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi']
 
         multiDexEnabled true
+
+        def tgAppId = getPropOrEnv("telegram.app_id", "TELEGRAM_APP_ID", "0")
+        def tgAppHash = getPropOrEnv("telegram.app_hash", "TELEGRAM_APP_HASH", "YOUR_APP_HASH_HERE")
+        buildConfigField "int", "APP_ID", "${tgAppId}"
+        buildConfigField "String", "APP_HASH", "\"${tgAppHash}\""
 
         externalNativeBuild {
             cmake {

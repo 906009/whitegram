@@ -1,16 +1,16 @@
 {
   "channels": {
     "12.1.1-lts": {
-      "version_name": "12.1.1.0",
-      "version_code": 621109,
+      "version_name": "12.1.1.1",
+      "version_code": 62111,
       "apk_url": "",
-      "changelog": "Whitegram 12.1.1.0 LTS\n• Интеграция Xray и поддержка vless / trojan / shadowTLS / qWDTT\n• Менеджер подписок и быстрая параллельная проверка серверов\n• Адаптивная иконка и поддержка ночной системной заставки\n• Выбор веток обновлений в настройках"
+      "changelog": "Whitegram 12.1.1.1 LTS\n• Интеграция Xray и поддержка vless / trojan / shadowTLS / qWDTT\n• Менеджер подписок и быстрая параллельная проверка серверов\n• Кнопка настройки прокси на экране авторизации\n• Исправления стабильности qWDTT и переключения серверов"
     },
     "latest": {
-      "version_name": "12.1.1.0",
-      "version_code": 621109,
+      "version_name": "12.1.1.1",
+      "version_code": 62111,
       "apk_url": "",
-      "changelog": "Whitegram 12.1.1.0\n• Актуальная версия"
+      "changelog": "Whitegram 12.1.1.1\n• Актуальная версия"
     }
   }
 }
