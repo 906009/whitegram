@@ -3,13 +3,13 @@
     "12.1.1-lts": {
       "version_name": "12.1.1.1",
       "version_code": 62111,
-      "apk_url": "",
+      "apk_url": "https://github.com/906009/whitegram/releases/download/v12.1.1.1/Whitegram.apk",
       "changelog": "Whitegram 12.1.1.1 LTS\n• Интеграция Xray и поддержка vless / trojan / shadowTLS / qWDTT\n• Менеджер подписок и быстрая параллельная проверка серверов\n• Кнопка настройки прокси на экране авторизации\n• Исправления стабильности qWDTT и переключения серверов"
     },
     "latest": {
       "version_name": "12.1.1.1",
       "version_code": 62111,
-      "apk_url": "",
+      "apk_url": "https://github.com/906009/whitegram/releases/download/v12.1.1.1/Whitegram.apk",
       "changelog": "Whitegram 12.1.1.1\n• Актуальная версия"
     }
   }
